@@ -1,0 +1,16 @@
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.iml
+.gradle/
+.idea/
+.android-sdk/
+build/
+local.properties
+captures/
+externalNativeBuild/
+app/build/
+gradle-*.zip
+gradle-*/

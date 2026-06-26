@@ -14,10 +14,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +39,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.Medication
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -52,6 +54,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -88,8 +92,8 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,6 +101,8 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.foundation.Canvas
+import com.bipolarmood.R
 import com.bipolarmood.data.DiaryEntryEntity
 import com.bipolarmood.data.ImpulseEntryEntity
 import com.bipolarmood.data.MedicationEntity
@@ -107,6 +113,7 @@ import com.bipolarmood.data.SleepEntryEntity
 import com.bipolarmood.data.TrustedPersonEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -140,15 +147,23 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen(val title: String, val short: String) {
-    Home("Главный", "Г"),
-    Mood("Лента", "Л"),
-    Graphs("Графики", "Гр"),
-    Diary("Дневник", "Д"),
-    Medications("Лекарства", "Лк"),
-    Impulses("Импульсы", "И"),
-    Settings("Настройки", "Н")
+private enum class Screen(val title: String) {
+    Medications("Лекарства"),
+    Diary("Дневник"),
+    Insights("Аналитика"),
+    Profile("Профиль");
+
+    val icon
+        @Composable get() = when (this) {
+            Medications -> Icons.Filled.Medication
+            Diary -> Icons.Filled.Book
+            Insights -> Icons.Filled.Analytics
+            Profile -> Icons.Filled.Person
+        }
 }
+
+private fun parseScreen(name: String?): Screen =
+    runCatching { Screen.valueOf(name ?: Screen.Diary.name) }.getOrDefault(Screen.Diary)
 
 @Composable
 private fun BipolarMoodApp(viewModel: AppViewModel) {
@@ -157,24 +172,42 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
     val impulseEntries by viewModel.impulseEntries.collectAsStateWithLifecycle()
     val medications by viewModel.medications.collectAsStateWithLifecycle()
     val medicationIntakes by viewModel.medicationIntakes.collectAsStateWithLifecycle()
-    val diaryEntries by viewModel.diaryEntries.collectAsStateWithLifecycle()
+    val feedItems by viewModel.feedItems.collectAsStateWithLifecycle()
     val sleepEntries by viewModel.sleepEntries.collectAsStateWithLifecycle()
     val trustedPeople by viewModel.trustedPeople.collectAsStateWithLifecycle()
 
-    var selectedScreen by rememberSaveable { mutableStateOf(Screen.Home.name) }
+    var selectedScreenName by rememberSaveable { mutableStateOf(Screen.Diary.name) }
     var showSafetyPlan by rememberSaveable { mutableStateOf(false) }
-    val screen = Screen.valueOf(selectedScreen)
+    val screen = parseScreen(selectedScreenName)
+    val hasMissedMeds = medications.any { it.missedReminders > 0 }
 
     BipolarMoodTheme(darkTheme = profile.darkTheme) {
         Scaffold(
             bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 8.dp
+                ) {
                     Screen.entries.forEach { item ->
+                        val selected = item == screen
                         NavigationBarItem(
-                            selected = item == screen,
-                            onClick = { selectedScreen = item.name },
-                            icon = { Text(item.short, fontWeight = FontWeight.Bold) },
-                            label = { Text(item.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            selected = selected,
+                            onClick = { selectedScreenName = item.name },
+                            icon = {
+                                Icon(
+                                    imageVector = item.icon,
+                                    contentDescription = item.title,
+                                    modifier = if (item == Screen.Diary && selected) Modifier.size(28.dp) else Modifier
+                                )
+                            },
+                            label = {
+                                Text(
+                                    item.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = if (item == Screen.Diary) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
                         )
                     }
                 }
@@ -187,36 +220,18 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                 color = MaterialTheme.colorScheme.background
             ) {
                 when (screen) {
-                    Screen.Home -> HomeScreen(
+                    Screen.Diary -> MainDiaryScreen(
                         profile = profile,
+                        feedItems = feedItems,
                         moods = moodEntries,
-                        impulses = impulseEntries,
                         medications = medications,
                         onAddMood = viewModel::addMoodEntry,
-                        onOpenSafetyPlan = { showSafetyPlan = true }
-                    )
-
-                    Screen.Mood -> MoodScreen(
-                        moods = moodEntries,
-                        sleepEntries = sleepEntries,
-                        onAddMood = viewModel::addMoodEntry,
                         onDeleteMood = viewModel::deleteMoodEntry,
-                        onAddSleep = viewModel::addSleepEntry
-                    )
-
-                    Screen.Graphs -> GraphsScreen(
-                        moods = moodEntries,
-                        impulses = impulseEntries,
-                        intakes = medicationIntakes,
-                        sleepEntries = sleepEntries,
-                        onOpenSafetyPlan = { showSafetyPlan = true }
-                    )
-
-                    Screen.Diary -> DiaryScreen(
-                        entries = diaryEntries,
-                        onAdd = viewModel::addDiaryEntry,
-                        onUpdate = viewModel::updateDiaryEntry,
-                        onDelete = viewModel::deleteDiaryEntry
+                        onAddDiary = viewModel::addDiaryEntry,
+                        onUpdateDiary = viewModel::updateDiaryEntry,
+                        onDeleteDiary = viewModel::deleteDiaryEntry,
+                        onOpenSafetyPlan = { showSafetyPlan = true },
+                        hasMissedMeds = hasMissedMeds
                     )
 
                     Screen.Medications -> MedicationsScreen(
@@ -229,16 +244,22 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                         onDelete = viewModel::deleteMedication
                     )
 
-                    Screen.Impulses -> ImpulsesScreen(
+                    Screen.Insights -> InsightsScreen(
                         moods = moodEntries,
                         impulses = impulseEntries,
-                        trustedPeople = trustedPeople,
-                        onAdd = viewModel::addImpulse,
+                        intakes = medicationIntakes,
+                        sleepEntries = sleepEntries,
+                        onAddMood = viewModel::addMoodEntry,
+                        onDeleteMood = viewModel::deleteMoodEntry,
+                        onAddSleep = viewModel::addSleepEntry,
+                        onAddImpulse = viewModel::addImpulse,
                         onTrustedScore = viewModel::addTrustedImpulseScore,
-                        onDelete = viewModel::deleteImpulse
+                        onDeleteImpulse = viewModel::deleteImpulse,
+                        trustedPeople = trustedPeople,
+                        onOpenSafetyPlan = { showSafetyPlan = true }
                     )
 
-                    Screen.Settings -> SettingsScreen(
+                    Screen.Profile -> ProfileScreen(
                         profile = profile,
                         trustedPeople = trustedPeople,
                         exportCsv = viewModel::exportCsv,
@@ -260,87 +281,146 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
 }
 
 @Composable
-private fun HomeScreen(
+private fun MainDiaryScreen(
     profile: ProfileEntity,
+    feedItems: List<FeedItem>,
     moods: List<MoodEntryEntity>,
-    impulses: List<ImpulseEntryEntity>,
     medications: List<MedicationEntity>,
     onAddMood: (Double, String, List<String>, String, Long) -> Unit,
-    onOpenSafetyPlan: () -> Unit
+    onDeleteMood: (MoodEntryEntity) -> Unit,
+    onAddDiary: (String, List<String>) -> Unit,
+    onUpdateDiary: (DiaryEntryEntity, String, List<String>) -> Unit,
+    onDeleteDiary: (DiaryEntryEntity) -> Unit,
+    onOpenSafetyPlan: () -> Unit,
+    hasMissedMeds: Boolean
 ) {
+    var feedFilter by rememberSaveable { mutableStateOf(FeedFilter.All.name) }
     var showMoodDialog by rememberSaveable { mutableStateOf(false) }
+    var showDiaryDialog by rememberSaveable { mutableStateOf(false) }
     var showSafetyHint by rememberSaveable { mutableStateOf(false) }
+    var editEntry by remember { mutableStateOf<DiaryEntryEntity?>(null) }
+    var selectedPhoto by rememberSaveable { mutableStateOf<String?>(null) }
+
+    val filter = runCatching { FeedFilter.valueOf(feedFilter) }.getOrDefault(FeedFilter.All)
+    val filteredFeed = remember(feedItems, filter) { feedItems.applyFilter(filter) }
     val latestMood = moods.firstOrNull()?.mood ?: 0.0
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Text("Привет, ${profile.userName}", style = MaterialTheme.typography.headlineMedium)
-                    Text("БАРсик рядом. Как ты сегодня?", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                HeartButton(onClick = onOpenSafetyPlan, pulse = medications.none { it.missedReminders > 0 })
-            }
-        }
-        item {
-            SectionCard {
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 88.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    SnowLeopardMascot(mood = latestMood, modifier = Modifier.size(180.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Последнее состояние", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
-                            latestMood.prettyMood(),
-                            style = MaterialTheme.typography.displaySmall,
-                            color = moodColor(latestMood)
+                            "Привет, ${profile.userName}",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
                         )
-                        Text(moodDescription(latestMood))
+                        Text(
+                            "Барсик, сова и медведь рядом",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = onOpenSafetyPlan,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(RedAccent.copy(alpha = if (hasMissedMeds) 0.35f else 0.18f))
+                    ) {
+                        Icon(Icons.Outlined.Favorite, contentDescription = "Safety Plan", tint = RedAccent)
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Button(
+            }
+
+            item {
+                MascotHeroCard(mood = latestMood)
+            }
+
+            item {
+                ProactiveHint(
+                    latestMood = latestMood,
+                    hasRecentSleepIssue = moods.any { it.symptoms.contains("нарушение сна") }
+                )
+            }
+
+            item {
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = YellowAccent, contentColor = Color.Black),
-                    onClick = { showMoodDialog = true }
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("Зафиксировать состояние", fontWeight = FontWeight.Bold)
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(containerColor = YellowAccent, contentColor = Color.Black),
+                        onClick = { showMoodDialog = true }
+                    ) {
+                        Text("Состояние", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = { showDiaryDialog = true }
+                    ) {
+                        Text("Заметка")
+                    }
                 }
             }
-        }
-        item {
-            ProactiveHint(latestMood = latestMood, hasRecentSleepIssue = moods.any { it.symptoms.contains("нарушение сна") })
-        }
-        item {
-            SectionTitle("Мини-график за день")
-            MoodLineChart(entries = moods.take(12).reversed(), compact = true)
-        }
-        item {
-            SectionTitle("Последние записи")
-            if (moods.isEmpty()) {
-                EmptyState("Пока нет записей. Нажми кнопку фиксации состояния.")
+
+            item {
+                if (moods.size >= 2) {
+                    SectionTitle("Динамика")
+                    MoodLineChart(entries = moods.take(12).reversed(), compact = true)
+                }
+            }
+
+            item {
+                SectionTitle("Лента")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FeedFilter.entries.forEach { option ->
+                        FilterChip(
+                            selected = filter == option,
+                            onClick = { feedFilter = option.name },
+                            label = { Text(option.label) },
+                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = TurquoiseAccent.copy(alpha = 0.25f),
+                                selectedLabelColor = TurquoiseAccent
+                            )
+                        )
+                    }
+                }
+            }
+
+            if (filteredFeed.isEmpty()) {
+                item {
+                    EmptyState(
+                        when (filter) {
+                            FeedFilter.Notes -> "Пока нет заметок. Нажми «Заметка», чтобы добавить."
+                            FeedFilter.Moods -> "Пока нет состояний. Нажми «Состояние», чтобы зафиксировать."
+                            FeedFilter.All -> "Лента пуста. Добавь заметку или зафиксируй состояние."
+                        }
+                    )
+                }
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    moods.take(3).forEach { MoodRow(it) }
+                items(filteredFeed, key = { it.sortKey }) { item ->
+                    when (item) {
+                        is FeedItem.Note -> DiaryFeedCard(
+                            entry = item.entry,
+                            onEdit = { editEntry = item.entry },
+                            onDelete = { onDeleteDiary(item.entry) },
+                            onPhotoClick = { selectedPhoto = it }
+                        )
+                        is FeedItem.Mood -> MoodFeedCard(
+                            entry = item.entry,
+                            onDelete = { onDeleteMood(item.entry) }
+                        )
+                    }
                 }
-            }
-        }
-        item {
-            SectionTitle("Риски сегодня")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatPill("Импульсы", impulses.size.toString(), RedAccent)
-                StatPill("Лекарства", medications.count { it.missedReminders == 0 }.toString(), TurquoiseAccent)
-                StatPill("Среднее", averageMood(moods).prettyMood(), moodColor(averageMood(moods)))
             }
         }
     }
@@ -352,6 +432,26 @@ private fun HomeScreen(
                 onAddMood(mood, category, symptoms, note, timestamp)
                 showMoodDialog = false
                 if (mood <= -4.0 || mood >= 4.0) showSafetyHint = true
+            }
+        )
+    }
+    if (showDiaryDialog) {
+        DiaryDialog(
+            onDismiss = { showDiaryDialog = false },
+            onSave = { text, photos ->
+                onAddDiary(text, photos)
+                showDiaryDialog = false
+            }
+        )
+    }
+    editEntry?.let { entry ->
+        DiaryDialog(
+            initialText = entry.text,
+            initialPhotos = splitPipe(entry.photoUris),
+            onDismiss = { editEntry = null },
+            onSave = { text, photos ->
+                onUpdateDiary(entry, text, photos)
+                editEntry = null
             }
         )
     }
@@ -369,58 +469,336 @@ private fun HomeScreen(
             dismissButton = { TextButton(onClick = { showSafetyHint = false }) { Text("Позже") } }
         )
     }
+    selectedPhoto?.let { uri ->
+        AlertDialog(
+            onDismissRequest = { selectedPhoto = null },
+            confirmButton = { TextButton(onClick = { selectedPhoto = null }) { Text("Закрыть") } },
+            text = {
+                UriImage(
+                    uri = uri,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .clip(RoundedCornerShape(20.dp))
+                )
+            }
+        )
+    }
 }
 
 @Composable
-private fun MoodScreen(
+private fun MascotHeroCard(mood: Double) {
+    SectionCard(containerColor = MaterialTheme.colorScheme.surface) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            MascotImage(mood = mood, modifier = Modifier.size(100.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    mascotName(mood),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = mascotAccent(mood)
+                )
+                Text(moodDescription(mood), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    mood.prettyMood(),
+                    style = MaterialTheme.typography.displaySmall,
+                    color = moodColor(mood),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            MascotThumbnail(R.drawable.mascot_barsik, "Барсик", mood in -2.0..2.0)
+            MascotThumbnail(R.drawable.mascot_owl, "Сова", mood > 2.0)
+            MascotThumbnail(R.drawable.mascot_bear, "Медведь", mood < -2.0)
+        }
+    }
+}
+
+@Composable
+private fun MascotThumbnail(resId: Int, label: String, active: Boolean) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Image(
+            painter = painterResource(resId),
+            contentDescription = label,
+            modifier = Modifier
+                .size(if (active) 52.dp else 40.dp)
+                .clip(CircleShape)
+                .border(
+                    width = if (active) 2.dp else 1.dp,
+                    color = if (active) YellowAccent else Color.Transparent,
+                    shape = CircleShape
+                ),
+            contentScale = ContentScale.Crop
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = if (active) YellowAccent else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun MascotImage(mood: Double, modifier: Modifier = Modifier) {
+    val resId = when {
+        mood <= -2.0 -> R.drawable.mascot_bear
+        mood >= 2.0 -> R.drawable.mascot_owl
+        else -> R.drawable.mascot_barsik
+    }
+    Image(
+        painter = painterResource(resId),
+        contentDescription = mascotName(mood),
+        modifier = modifier.clip(CircleShape),
+        contentScale = ContentScale.Crop
+    )
+}
+
+@Composable
+private fun DiaryFeedCard(
+    entry: DiaryEntryEntity,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onPhotoClick: (String) -> Unit
+) {
+    PaperCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AssistChip(
+                onClick = {},
+                label = { Text("Заметка") },
+                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                    containerColor = LavenderAccent.copy(alpha = 0.2f),
+                    labelColor = LavenderAccent
+                )
+            )
+            Text(
+                formatDateTime(entry.timestamp),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color(0xFF5A5A5A)
+            )
+        }
+        Text(entry.text, color = Color(0xFF1F1F1F))
+        val photos = splitPipe(entry.photoUris)
+        if (photos.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                photos.forEachIndexed { index, uri ->
+                    UriPolaroid(uri = uri, index = index, onClick = { onPhotoClick(uri) })
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TextButton(onClick = onEdit) { Text("Редактировать", color = Color(0xFF333333)) }
+            TextButton(onClick = onDelete) { Text("Удалить", color = RedAccent) }
+        }
+    }
+}
+
+@Composable
+private fun MoodFeedCard(
+    entry: MoodEntryEntity,
+    onDelete: () -> Unit
+) {
+    SectionCard(
+        containerColor = moodColor(entry.mood).copy(alpha = 0.12f)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AssistChip(
+                onClick = {},
+                label = { Text("Состояние") },
+                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                    containerColor = moodColor(entry.mood).copy(alpha = 0.2f),
+                    labelColor = moodColor(entry.mood)
+                )
+            )
+            Text(
+                formatDateTime(entry.timestamp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(entry.category.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.Bold)
+                if (entry.note.isNotBlank()) Text(entry.note, modifier = Modifier.padding(top = 4.dp))
+            }
+            Text(
+                entry.mood.prettyMood(),
+                style = MaterialTheme.typography.headlineMedium,
+                color = moodColor(entry.mood),
+                fontWeight = FontWeight.Bold
+            )
+        }
+        val symptoms = splitPipe(entry.symptoms)
+        if (symptoms.isNotEmpty()) {
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                symptoms.forEach { symptom ->
+                    AssistChip(onClick = {}, label = { Text(symptom, style = MaterialTheme.typography.labelSmall) })
+                }
+            }
+        }
+        TextButton(onClick = onDelete) { Text("Удалить", color = RedAccent) }
+    }
+}
+
+@Composable
+private fun InsightsScreen(
     moods: List<MoodEntryEntity>,
+    impulses: List<ImpulseEntryEntity>,
+    intakes: List<MedicationIntakeEntity>,
     sleepEntries: List<SleepEntryEntity>,
     onAddMood: (Double, String, List<String>, String, Long) -> Unit,
     onDeleteMood: (MoodEntryEntity) -> Unit,
-    onAddSleep: (String, String, String, Int, List<String>) -> Unit
+    onAddSleep: (String, String, String, Int, List<String>) -> Unit,
+    onAddImpulse: (String, Double?, String, Int, String) -> Unit,
+    onTrustedScore: (ImpulseEntryEntity, Int, String) -> Unit,
+    onDeleteImpulse: (ImpulseEntryEntity) -> Unit,
+    @Suppress("UNUSED_PARAMETER") trustedPeople: List<TrustedPersonEntity>,
+    onOpenSafetyPlan: () -> Unit
 ) {
+    var mode by rememberSaveable { mutableStateOf("График") }
+    var section by rememberSaveable { mutableStateOf("Обзор") }
     var showMoodDialog by rememberSaveable { mutableStateOf(false) }
     var showSleepDialog by rememberSaveable { mutableStateOf(false) }
+    var showImpulseDialog by rememberSaveable { mutableStateOf(false) }
+    var scoringEntry by remember { mutableStateOf<ImpulseEntryEntity?>(null) }
+    val elevated = moods.firstOrNull()?.mood ?: 0.0
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Header("Календарь / Лента", "История настроения, симптомов и сна")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { showMoodDialog = true }) { Text("Добавить состояние") }
-                OutlinedButton(onClick = { showSleepDialog = true }) { Text("Сон") }
+            Header("Аналитика", "Графики, импульсы, сон и тренды")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Обзор", "Импульсы", "Сон").forEach { tab ->
+                    FilterChip(
+                        selected = section == tab,
+                        onClick = { section = tab },
+                        label = { Text(tab) }
+                    )
+                }
             }
         }
-        item {
-            SectionTitle("Записи настроения")
-        }
-        items(moods, key = { it.id }) { entry ->
-            SectionCard {
-                MoodRow(entry)
-                if (entry.note.isNotBlank()) {
-                    Text(entry.note, modifier = Modifier.padding(top = 8.dp))
-                }
-                val symptoms = splitPipe(entry.symptoms)
-                if (symptoms.isNotEmpty()) {
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        symptoms.forEach { AssistChip(onClick = {}, label = { Text(it) }) }
+
+        if (section == "Обзор") {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("График", "Теплокарта").forEach {
+                        FilterChip(selected = mode == it, onClick = { mode = it }, label = { Text(it) })
                     }
                 }
-                TextButton(onClick = { onDeleteMood(entry) }) { Text("Удалить", color = RedAccent) }
+            }
+            item {
+                SectionCard {
+                    if (mode == "График") {
+                        MoodLineChart(entries = moods.reversed(), compact = false)
+                    } else {
+                        MoodHeatMap(entries = moods)
+                    }
+                }
+            }
+            item {
+                SectionCard {
+                    SectionTitle("Приверженность терапии")
+                    val taken = intakes.count { it.status == "taken" }
+                    val missed = intakes.count { it.status != "taken" }
+                    AdherenceBars(taken = taken, missed = missed)
+                }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    StatPill("Записей", moods.size.toString(), TurquoiseAccent)
+                    StatPill("Импульсов", impulses.size.toString(), RedAccent)
+                    StatPill("Среднее", averageMood(moods).prettyMood(), moodColor(averageMood(moods)))
+                }
             }
         }
+
+        if (section == "Импульсы") {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (elevated >= 4.0) {
+                        SectionCard(containerColor = RedAccent.copy(alpha = 0.16f)) {
+                            Text(
+                                "Сейчас высокий подъём. Перед крупными решениями лучше спросить близкого.",
+                                color = RedAccent
+                            )
+                        }
+                    }
+                    Button(onClick = { showImpulseDialog = true }) { Text("Добавить импульс") }
+                }
+            }
+            items(impulses, key = { it.id }) { entry ->
+                SectionCard {
+                    Text(entry.description, style = MaterialTheme.typography.titleLarge)
+                    Text("${formatDateTime(entry.timestamp)} • ${entry.category}")
+                    entry.cost?.let { Text("Стоимость: ${it.roundToInt()}") }
+                    ScoreBars(author = entry.authorScore, auto = entry.autoScore, trusted = entry.trustedScore)
+                    if (entry.authorComment.isNotBlank()) Text("Комментарий: ${entry.authorComment}")
+                    if (entry.trustedComment.isNotBlank()) Text("Близкий: ${entry.trustedComment}")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { scoringEntry = entry }) { Text("Оценка близкого") }
+                        TextButton(onClick = { onDeleteImpulse(entry) }) { Text("Удалить", color = RedAccent) }
+                    }
+                }
+            }
+        }
+
+        if (section == "Сон") {
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { showMoodDialog = true }) { Text("Состояние") }
+                    Button(onClick = { showSleepDialog = true }) { Text("Добавить сон") }
+                }
+            }
+            items(sleepEntries, key = { it.id }) { entry ->
+                SectionCard {
+                    Text(entry.date, fontWeight = FontWeight.Bold)
+                    Text("Сон: ${entry.asleepAt} - ${entry.wokeAt}, качество ${entry.quality}/10")
+                    Text(splitPipe(entry.mixedStateMarkers).joinToString(", ").ifBlank { "Маркеры не отмечены" })
+                }
+            }
+            items(moods, key = { "mood-${it.id}" }) { entry ->
+                SectionCard {
+                    MoodRow(entry)
+                    if (entry.note.isNotBlank()) Text(entry.note, modifier = Modifier.padding(top = 8.dp))
+                    TextButton(onClick = { onDeleteMood(entry) }) { Text("Удалить", color = RedAccent) }
+                }
+            }
+        }
+
         item {
-            SectionTitle("Сон и смешанные состояния")
-        }
-        items(sleepEntries, key = { it.id }) { entry ->
-            SectionCard {
-                Text(entry.date, fontWeight = FontWeight.Bold)
-                Text("Сон: ${entry.asleepAt} - ${entry.wokeAt}, качество ${entry.quality}/10")
-                Text(splitPipe(entry.mixedStateMarkers).joinToString(", ").ifBlank { "Маркеры не отмечены" })
-            }
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = RedAccent),
+                onClick = onOpenSafetyPlan
+            ) { Text("Помощь / Safety Plan") }
         }
     }
 
@@ -436,154 +814,19 @@ private fun MoodScreen(
             showSleepDialog = false
         })
     }
-}
-
-@Composable
-private fun GraphsScreen(
-    moods: List<MoodEntryEntity>,
-    impulses: List<ImpulseEntryEntity>,
-    intakes: List<MedicationIntakeEntity>,
-    sleepEntries: List<SleepEntryEntity>,
-    onOpenSafetyPlan: () -> Unit
-) {
-    var mode by rememberSaveable { mutableStateOf("График") }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Header("Графики", "Настроение, импульсы, лекарства и сон")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("График", "Теплокарта").forEach {
-                    FilterChip(selected = mode == it, onClick = { mode = it }, label = { Text(it) })
-                }
-            }
-        }
-        item {
-            SectionCard {
-                if (mode == "График") {
-                    MoodLineChart(entries = moods.reversed(), compact = false)
-                } else {
-                    MoodHeatMap(entries = moods)
-                }
-            }
-        }
-        item {
-            SectionCard {
-                SectionTitle("Проблемность импульсов")
-                ImpulseScatter(impulses)
-            }
-        }
-        item {
-            SectionCard {
-                SectionTitle("Приверженность терапии")
-                val taken = intakes.count { it.status == "taken" }
-                val missed = intakes.count { it.status != "taken" }
-                AdherenceBars(taken = taken, missed = missed)
-            }
-        }
-        item {
-            SectionCard {
-                SectionTitle("Сон")
-                if (sleepEntries.isEmpty()) {
-                    EmptyState("Добавь записи сна во вкладке Лента.")
-                } else {
-                    sleepEntries.take(5).forEach {
-                        Text("${it.date}: ${it.asleepAt}-${it.wokeAt}, качество ${it.quality}/10")
-                    }
-                }
-            }
-        }
-        item {
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = RedAccent),
-                onClick = onOpenSafetyPlan
-            ) { Text("Помощь / Safety Plan") }
-        }
-    }
-}
-
-@Composable
-private fun DiaryScreen(
-    entries: List<DiaryEntryEntity>,
-    onAdd: (String, List<String>) -> Unit,
-    onUpdate: (DiaryEntryEntity, String, List<String>) -> Unit,
-    onDelete: (DiaryEntryEntity) -> Unit
-) {
-    var showDialog by rememberSaveable { mutableStateOf(false) }
-    var editEntry by remember { mutableStateOf<DiaryEntryEntity?>(null) }
-    var selectedPhoto by rememberSaveable { mutableStateOf<String?>(null) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        item {
-            Header("Дневник", "Лента из тетрадных листов с фото")
-            Button(onClick = { showDialog = true }) { Text("Новая запись") }
-        }
-        items(entries, key = { it.id }) { entry ->
-            PaperCard {
-                Text(
-                    formatDateTime(entry.timestamp),
-                    fontFamily = FontFamily.Cursive,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = Color(0xFF1F1F1F)
-                )
-                Text(entry.text, color = Color(0xFF1F1F1F))
-                val photos = splitPipe(entry.photoUris)
-                if (photos.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(top = 12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        photos.forEachIndexed { index, uri ->
-                            UriPolaroid(uri = uri, index = index, onClick = { selectedPhoto = uri })
-                        }
-                    }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { editEntry = entry }) { Text("Редактировать") }
-                    TextButton(onClick = { onDelete(entry) }) { Text("Удалить", color = RedAccent) }
-                }
-            }
-        }
-    }
-
-    if (showDialog) {
-        DiaryDialog(onDismiss = { showDialog = false }, onSave = { text, photos ->
-            onAdd(text, photos)
-            showDialog = false
+    if (showImpulseDialog) {
+        ImpulseDialog(onDismiss = { showImpulseDialog = false }, onSave = { description, cost, category, score, comment ->
+            onAddImpulse(description, cost, category, score, comment)
+            showImpulseDialog = false
         })
     }
-    editEntry?.let { entry ->
-        DiaryDialog(
-            initialText = entry.text,
-            initialPhotos = splitPipe(entry.photoUris),
-            onDismiss = { editEntry = null },
-            onSave = { text, photos ->
-                onUpdate(entry, text, photos)
-                editEntry = null
-            }
-        )
-    }
-    selectedPhoto?.let { uri ->
-        AlertDialog(
-            onDismissRequest = { selectedPhoto = null },
-            confirmButton = { TextButton(onClick = { selectedPhoto = null }) { Text("Закрыть") } },
-            text = {
-                UriImage(
-                    uri = uri,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(360.dp)
-                        .clip(RoundedCornerShape(20.dp))
-                )
+    scoringEntry?.let { entry ->
+        TrustedScoreDialog(
+            entry = entry,
+            onDismiss = { scoringEntry = null },
+            onSave = { score, comment ->
+                onTrustedScore(entry, score, comment)
+                scoringEntry = null
             }
         )
     }
@@ -667,68 +910,7 @@ private fun MedicationsScreen(
 }
 
 @Composable
-private fun ImpulsesScreen(
-    moods: List<MoodEntryEntity>,
-    impulses: List<ImpulseEntryEntity>,
-    trustedPeople: List<TrustedPersonEntity>,
-    onAdd: (String, Double?, String, Int, String) -> Unit,
-    onTrustedScore: (ImpulseEntryEntity, Int, String) -> Unit,
-    onDelete: (ImpulseEntryEntity) -> Unit
-) {
-    var showDialog by rememberSaveable { mutableStateOf(false) }
-    var scoringEntry by remember { mutableStateOf<ImpulseEntryEntity?>(null) }
-    val elevated = moods.firstOrNull()?.mood ?: 0.0
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Header("Импульсы", "Желания, действия и оценка проблемности")
-            if (elevated >= 4.0) {
-                SectionCard(containerColor = RedAccent.copy(alpha = 0.16f)) {
-                    Text("Сейчас высокий подъем. Перед крупными решениями лучше спросить близкого.", color = RedAccent)
-                }
-            }
-            Button(onClick = { showDialog = true }) { Text("Добавить импульс") }
-        }
-        items(impulses, key = { it.id }) { entry ->
-            SectionCard {
-                Text(entry.description, style = MaterialTheme.typography.titleLarge)
-                Text("${formatDateTime(entry.timestamp)} • ${entry.category}")
-                entry.cost?.let { Text("Стоимость: ${it.roundToInt()}") }
-                ScoreBars(author = entry.authorScore, auto = entry.autoScore, trusted = entry.trustedScore)
-                if (entry.authorComment.isNotBlank()) Text("Комментарий: ${entry.authorComment}")
-                if (entry.trustedComment.isNotBlank()) Text("Близкий: ${entry.trustedComment}")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { scoringEntry = entry }) { Text("Оценка близкого") }
-                    OutlinedButton(onClick = { }) { Text("Спросить близкого (${trustedPeople.count { !it.revoked }})") }
-                    TextButton(onClick = { onDelete(entry) }) { Text("Удалить", color = RedAccent) }
-                }
-            }
-        }
-    }
-    if (showDialog) {
-        ImpulseDialog(onDismiss = { showDialog = false }, onSave = { description, cost, category, score, comment ->
-            onAdd(description, cost, category, score, comment)
-            showDialog = false
-        })
-    }
-    scoringEntry?.let { entry ->
-        TrustedScoreDialog(
-            entry = entry,
-            onDismiss = { scoringEntry = null },
-            onSave = { score, comment ->
-                onTrustedScore(entry, score, comment)
-                scoringEntry = null
-            }
-        )
-    }
-}
-
-@Composable
-private fun SettingsScreen(
+private fun ProfileScreen(
     profile: ProfileEntity,
     trustedPeople: List<TrustedPersonEntity>,
     exportCsv: () -> String,
@@ -758,7 +940,23 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Header("Настройки", "Профиль, близкие, тема, экспорт")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.mascot_barsik),
+                    contentDescription = "Барсик",
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape),
+                    contentScale = ContentScale.Crop
+                )
+                Column {
+                    Header("Профиль", "Настройки, близкие и экспорт")
+                }
+            }
         }
         item {
             SectionCard {
@@ -1160,64 +1358,6 @@ private fun MoodRow(entry: MoodEntryEntity) {
 }
 
 @Composable
-private fun HeartButton(onClick: () -> Unit, pulse: Boolean) {
-    val scale by animateFloatAsState(
-        targetValue = if (pulse) 1.08f else 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "heartPulse"
-    )
-    Box(
-        modifier = Modifier
-            .size(52.dp)
-            .graphicsLayer(scaleX = scale, scaleY = scale)
-            .clip(CircleShape)
-            .background(RedAccent)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text("♥", color = Color.White, style = MaterialTheme.typography.headlineSmall)
-    }
-}
-
-@Composable
-private fun SnowLeopardMascot(mood: Double, modifier: Modifier = Modifier) {
-    val tailLift by animateFloatAsState(
-        targetValue = when {
-            mood >= 3.5 -> -46f
-            mood <= -3.5 -> 42f
-            else -> 0f
-        },
-        animationSpec = spring(stiffness = Spring.StiffnessLow),
-        label = "tail"
-    )
-    Canvas(modifier = modifier) {
-        val center = Offset(size.width * 0.42f, size.height * 0.48f)
-        drawCircle(Color.White, radius = size.minDimension * 0.28f, center = center)
-        drawCircle(Color(0xFF2A2A2A), radius = size.minDimension * 0.08f, center = Offset(size.width * 0.25f, size.height * 0.25f))
-        drawCircle(Color(0xFF2A2A2A), radius = size.minDimension * 0.08f, center = Offset(size.width * 0.56f, size.height * 0.25f))
-        drawCircle(Color.Black, radius = size.minDimension * 0.025f, center = Offset(size.width * 0.34f, size.height * 0.45f))
-        drawCircle(Color.Black, radius = size.minDimension * 0.025f, center = Offset(size.width * 0.50f, size.height * 0.45f))
-        drawCircle(TurquoiseAccent, radius = size.minDimension * 0.015f, center = Offset(size.width * 0.42f, size.height * 0.54f))
-        drawArc(
-            color = if (mood < -2) RedAccent else Color.Black,
-            startAngle = if (mood < -2) 20f else 0f,
-            sweepAngle = if (mood < -2) -140f else 180f,
-            useCenter = false,
-            topLeft = Offset(size.width * 0.34f, size.height * 0.56f),
-            size = androidx.compose.ui.geometry.Size(size.width * 0.18f, size.height * 0.08f),
-            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
-        )
-        drawLine(
-            color = YellowAccent,
-            start = Offset(size.width * 0.64f, size.height * 0.62f),
-            end = Offset(size.width * 0.88f, size.height * (0.42f + tailLift / 180f)),
-            strokeWidth = 14.dp.toPx(),
-            cap = StrokeCap.Round
-        )
-    }
-}
-
-@Composable
 private fun ProactiveHint(latestMood: Double, hasRecentSleepIssue: Boolean) {
     val hint = when {
         latestMood >= 4.0 -> "Помни о последствиях импульсивных решений. Отложи крупные решения на 24 часа."
@@ -1396,8 +1536,16 @@ private fun UriImage(uri: String, modifier: Modifier = Modifier) {
     LaunchedEffect(uri) {
         image = withContext(Dispatchers.IO) {
             runCatching {
-                context.contentResolver.openInputStream(Uri.parse(uri))?.use { stream ->
-                    BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                val stream = when {
+                    uri.startsWith("/") -> File(uri).takeIf { it.exists() }?.inputStream()
+                    else -> {
+                        val parsed = Uri.parse(uri)
+                        if (parsed.scheme.isNullOrBlank()) return@runCatching null
+                        context.contentResolver.openInputStream(parsed)
+                    }
+                } ?: return@runCatching null
+                stream.use { input ->
+                    BitmapFactory.decodeStream(input)?.asImageBitmap()
                 }
             }.getOrNull()
         }
@@ -1416,19 +1564,21 @@ private fun BipolarMoodTheme(darkTheme: Boolean, content: @Composable () -> Unit
     val darkScheme = darkColorScheme(
         background = DeepBlack,
         surface = SurfaceBlack,
+        surfaceVariant = Color(0xFF1E1E1E),
         primary = YellowAccent,
         secondary = TurquoiseAccent,
-        tertiary = RedAccent,
+        tertiary = LavenderAccent,
         onBackground = Color.White,
         onSurface = Color.White,
-        onSurfaceVariant = Color(0xFFB0B0B0)
+        onSurfaceVariant = Color(0xFFB8B8B8)
     )
     val lightScheme = lightColorScheme(
-        background = Color(0xFFF8F8F8),
+        background = Color(0xFFF5F3EF),
         surface = Color.White,
+        surfaceVariant = Color(0xFFEDE8E0),
         primary = Color(0xFF7A5C00),
         secondary = Color(0xFF006874),
-        tertiary = RedAccent,
+        tertiary = Color(0xFF6B4C9A),
         onBackground = Color(0xFF101010),
         onSurface = Color(0xFF101010),
         onSurfaceVariant = Color(0xFF555555)
@@ -1456,6 +1606,18 @@ private fun moodDescription(mood: Double): String = when {
     else -> "Ровное состояние"
 }
 
+private fun mascotName(mood: Double): String = when {
+    mood <= -2.0 -> "Биполярный медведь"
+    mood >= 2.0 -> "Биполярная сова"
+    else -> "Барсик"
+}
+
+private fun mascotAccent(mood: Double): Color = when {
+    mood <= -2.0 -> BearBrown
+    mood >= 2.0 -> LavenderAccent
+    else -> TurquoiseAccent
+}
+
 private fun averageMood(entries: List<MoodEntryEntity>): Double {
     return entries.take(12).map { it.mood }.average().takeIf { !it.isNaN() } ?: 0.0
 }
@@ -1469,4 +1631,6 @@ private val SurfaceBlack = Color(0xFF121212)
 private val YellowAccent = Color(0xFFFFD700)
 private val RedAccent = Color(0xFFFF3B30)
 private val TurquoiseAccent = Color(0xFF4DD0E1)
+private val LavenderAccent = Color(0xFFB39DDB)
+private val BearBrown = Color(0xFF8D6E63)
 private val PaperColor = Color(0xFFFFF8E7)

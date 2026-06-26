@@ -19,6 +19,7 @@ import com.bipolarmood.data.SleepEntryEntity
 import com.bipolarmood.data.TrustedPersonEntity
 import com.bipolarmood.notifications.MedicationReminderWorker
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -57,6 +58,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val profile = dao.observeProfile()
         .map { it ?: defaultProfile() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), defaultProfile())
+
+    val feedItems = combine(diaryEntries, moodEntries) { diaries, moods ->
+        buildFeedItems(diaries, moods)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         viewModelScope.launch {
@@ -174,11 +179,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addDiaryEntry(text: String, photoUris: List<String>) {
         viewModelScope.launch {
+            val persisted = PhotoStorage.persistPhotos(getApplication(), photoUris)
             dao.insertDiaryEntry(
                 DiaryEntryEntity(
                     timestamp = now(),
                     text = text.trim(),
-                    photoUris = photoUris.joinToString("|")
+                    photoUris = persisted.joinToString("|")
                 )
             )
         }
@@ -186,7 +192,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateDiaryEntry(entry: DiaryEntryEntity, text: String, photoUris: List<String>) {
         viewModelScope.launch {
-            dao.updateDiaryEntry(entry.copy(text = text.trim(), photoUris = photoUris.joinToString("|")))
+            val persisted = PhotoStorage.persistPhotos(getApplication(), photoUris)
+            dao.updateDiaryEntry(entry.copy(text = text.trim(), photoUris = persisted.joinToString("|")))
         }
     }
 
@@ -316,7 +323,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         dao.insertDiaryEntry(
             DiaryEntryEntity(
                 timestamp = base - TimeUnit.HOURS.toMillis(1),
-                text = "Добро пожаловать в БАРсик. Здесь можно вести заметки, прикреплять фото и отслеживать состояние.",
+                text = "Добро пожаловать в БАРсик! Барсик, биполярная сова и биполярный медведь рядом. Здесь можно вести заметки с фото и фиксировать состояние.",
                 photoUris = ""
             )
         )

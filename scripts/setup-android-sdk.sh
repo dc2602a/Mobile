@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SDK_DIR="${ANDROID_HOME:-$ROOT_DIR/.android-sdk}"
 CMDLINE_TOOLS_REV="${CMDLINE_TOOLS_REV:-14742923}"
 COMPILE_SDK="${COMPILE_SDK:-37.0}"
-BUILD_TOOLS="${BUILD_TOOLS:-37.0.0}"
+BUILD_TOOLS="${BUILD_TOOLS:-36.0.0}"
 ZIP="commandlinetools-linux-${CMDLINE_TOOLS_REV}_latest.zip"
 URL="https://dl.google.com/android/repository/${ZIP}"
 

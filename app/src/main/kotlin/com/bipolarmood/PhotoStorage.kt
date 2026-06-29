@@ -17,7 +17,12 @@ object PhotoStorage {
 
     private fun persistSingle(context: Context, dir: File, uriString: String): String? {
         return runCatching {
-            if (uriString.startsWith("/") && File(uriString).exists()) return uriString
+            if (uriString.startsWith("/")) {
+                val existing = File(uriString)
+                if (existing.exists() && existing.canonicalPath.startsWith(dir.canonicalPath)) {
+                    return uriString
+                }
+            }
             val uri = Uri.parse(uriString)
             val input = when (uri.scheme) {
                 "file" -> uri.path?.let { File(it).inputStream() }

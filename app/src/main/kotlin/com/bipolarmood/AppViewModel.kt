@@ -5,9 +5,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.bipolarmood.data.AppDatabase
 import com.bipolarmood.data.DiaryEntryEntity
 import com.bipolarmood.data.ImpulseEntryEntity
@@ -17,6 +14,7 @@ import com.bipolarmood.data.MoodEntryEntity
 import com.bipolarmood.data.ProfileEntity
 import com.bipolarmood.data.SleepEntryEntity
 import com.bipolarmood.data.TrustedPersonEntity
+import com.bipolarmood.notifications.MedicationReminderScheduler
 import com.bipolarmood.notifications.MedicationReminderWorker
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -71,6 +69,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (dao.countMoodEntries() == 0) {
                 seedFirstRunData()
             }
+            rescheduleAllMedicationReminders()
+        }
+    }
+
+    private suspend fun rescheduleAllMedicationReminders() {
+        val interval = profile.value.reminderIntervalMinutes
+        dao.getAllMedications().forEach { medication ->
+            MedicationReminderScheduler.schedule(getApplication(), medication, interval)
         }
     }
 
@@ -137,7 +143,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     timeZone = timeZone.ifBlank { TimeZone.getDefault().id }
                 )
             )
-            scheduleMedicationReminder(medicationId, name.trim(), dosage.trim())
+            scheduleMedicationReminder(
+                MedicationEntity(
+                    id = medicationId,
+                    name = name.trim(),
+                    dosage = dosage.trim(),
+                    time = time.trim(),
+                    frequency = frequency,
+                    timeZone = timeZone.ifBlank { TimeZone.getDefault().id }
+                )
+            )
         }
     }
 
@@ -154,6 +169,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     status = "taken"
                 )
             )
+            scheduleMedicationReminder(medication.copy(missedReminders = 0, lastTakenAt = takenAt))
         }
     }
 
@@ -174,7 +190,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun deleteMedication(entry: MedicationEntity) {
-        viewModelScope.launch { dao.deleteMedication(entry) }
+        viewModelScope.launch {
+            MedicationReminderScheduler.cancel(getApplication(), entry.id)
+            dao.deleteMedication(entry)
+        }
     }
 
     fun addDiaryEntry(text: String, photoUris: List<String>) {
@@ -241,7 +260,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveProfile(profile: ProfileEntity) {
-        viewModelScope.launch { dao.upsertProfile(profile) }
+        viewModelScope.launch {
+            dao.upsertProfile(profile)
+            rescheduleAllMedicationReminders()
+        }
     }
 
     fun exportCsv(): String {
@@ -254,7 +276,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val meds = medications.value.joinToString("\n") {
             "medication,${it.time},${it.name},${it.dosage},${it.missedReminders}"
         }
-        return listOf("type,date,value,extra,note", moods, impulses, meds)
+        val diary = diaryEntries.value.joinToString("\n") {
+            "diary,${formatDateTime(it.timestamp)},,\"${it.text.escapeCsv()}\""
+        }
+        val sleep = sleepEntries.value.joinToString("\n") {
+            "sleep,${it.date},${it.quality},\"${it.asleepAt}-${it.wokeAt}\""
+        }
+        return listOf("type,date,value,extra,note", moods, impulses, meds, diary, sleep)
             .filter { it.isNotBlank() }
             .joinToString("\n")
     }
@@ -286,18 +314,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return score.coerceIn(1, 10)
     }
 
-    private fun scheduleMedicationReminder(medicationId: Long, name: String, dosage: String) {
-        val request = OneTimeWorkRequestBuilder<MedicationReminderWorker>()
-            .setInitialDelay(30, TimeUnit.MINUTES)
-            .setInputData(
-                workDataOf(
-                    MedicationReminderWorker.KEY_MEDICATION_ID to medicationId,
-                    MedicationReminderWorker.KEY_MEDICATION_NAME to name,
-                    MedicationReminderWorker.KEY_DOSAGE to dosage
-                )
-            )
-            .build()
-        WorkManager.getInstance(getApplication()).enqueue(request)
+    private fun scheduleMedicationReminder(medication: MedicationEntity) {
+        MedicationReminderScheduler.schedule(
+            getApplication(),
+            medication,
+            profile.value.reminderIntervalMinutes
+        )
     }
 
     private suspend fun seedFirstRunData() {

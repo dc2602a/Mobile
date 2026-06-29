@@ -40,10 +40,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.outlined.Favorite
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -148,22 +148,27 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class Screen(val title: String) {
-    Medications("Лекарства"),
+    Insights("Обзор"),
     Diary("Дневник"),
-    Insights("Аналитика"),
+    Medications("Лекарства"),
     Profile("Профиль");
 
     val icon
         @Composable get() = when (this) {
-            Medications -> Icons.Filled.Medication
+            Insights -> Icons.Filled.Timeline
             Diary -> Icons.Filled.Book
-            Insights -> Icons.Filled.Analytics
+            Medications -> Icons.Filled.Medication
             Profile -> Icons.Filled.Person
         }
 }
 
-private fun parseScreen(name: String?): Screen =
-    runCatching { Screen.valueOf(name ?: Screen.Diary.name) }.getOrDefault(Screen.Diary)
+private fun parseScreen(name: String?): Screen = when (name) {
+    "Home", "Mood", "Diary" -> Screen.Diary
+    "Medications" -> Screen.Medications
+    "Insights", "Graphs" -> Screen.Insights
+    "Settings", "Profile" -> Screen.Profile
+    else -> runCatching { Screen.valueOf(name ?: Screen.Diary.name) }.getOrDefault(Screen.Diary)
+}
 
 @Composable
 private fun BipolarMoodApp(viewModel: AppViewModel) {
@@ -324,7 +329,7 @@ private fun MainDiaryScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Барсик, сова и медведь рядом",
+                            "Барсик рисует в дневнике — мы рядом",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -341,7 +346,16 @@ private fun MainDiaryScreen(
             }
 
             item {
-                MascotHeroCard(mood = latestMood)
+                MascotSceneBanner(
+                    imageRes = R.drawable.mascot_barsik_diary,
+                    title = "Барсик ведёт дневник",
+                    subtitle = "Запиши мысль или прикрепи фото — без спешки",
+                    accentColor = TurquoiseAccent
+                )
+            }
+
+            item {
+                MoodSummaryChip(latestMood = latestMood)
             }
 
             item {
@@ -487,79 +501,59 @@ private fun MainDiaryScreen(
 }
 
 @Composable
-private fun MascotHeroCard(mood: Double) {
-    SectionCard(containerColor = MaterialTheme.colorScheme.surface) {
+private fun MascotSceneBanner(
+    imageRes: Int,
+    title: String,
+    subtitle: String,
+    accentColor: Color = TurquoiseAccent
+) {
+    SectionCard(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            MascotImage(mood = mood, modifier = Modifier.size(100.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    mascotName(mood),
-                    style = MaterialTheme.typography.titleLarge,
+                    title,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
-                    color = mascotAccent(mood)
+                    color = accentColor
                 )
-                Text(moodDescription(mood), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    mood.prettyMood(),
-                    style = MaterialTheme.typography.displaySmall,
-                    color = moodColor(mood),
-                    fontWeight = FontWeight.Bold
-                )
+                Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Image(
+                painter = painterResource(imageRes),
+                contentDescription = title,
+                modifier = Modifier
+                    .size(112.dp)
+                    .clip(RoundedCornerShape(18.dp)),
+                contentScale = ContentScale.Crop
+            )
         }
-        Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+private fun MoodSummaryChip(latestMood: Double) {
+    SectionCard {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceEvenly
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            MascotThumbnail(R.drawable.mascot_barsik, "Барсик", mood in -2.0..2.0)
-            MascotThumbnail(R.drawable.mascot_owl, "Сова", mood > 2.0)
-            MascotThumbnail(R.drawable.mascot_bear, "Медведь", mood < -2.0)
+            Column {
+                Text("Последнее состояние", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(moodDescription(latestMood), fontWeight = FontWeight.Medium)
+            }
+            Text(
+                latestMood.prettyMood(),
+                style = MaterialTheme.typography.headlineMedium,
+                color = moodColor(latestMood),
+                fontWeight = FontWeight.Bold
+            )
         }
     }
-}
-
-@Composable
-private fun MascotThumbnail(resId: Int, label: String, active: Boolean) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Image(
-            painter = painterResource(resId),
-            contentDescription = label,
-            modifier = Modifier
-                .size(if (active) 52.dp else 40.dp)
-                .clip(CircleShape)
-                .border(
-                    width = if (active) 2.dp else 1.dp,
-                    color = if (active) YellowAccent else Color.Transparent,
-                    shape = CircleShape
-                ),
-            contentScale = ContentScale.Crop
-        )
-        Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (active) YellowAccent else MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun MascotImage(mood: Double, modifier: Modifier = Modifier) {
-    val resId = when {
-        mood <= -2.0 -> R.drawable.mascot_bear
-        mood >= 2.0 -> R.drawable.mascot_owl
-        else -> R.drawable.mascot_barsik
-    }
-    Image(
-        painter = painterResource(resId),
-        contentDescription = mascotName(mood),
-        modifier = modifier.clip(CircleShape),
-        contentScale = ContentScale.Crop
-    )
 }
 
 @Composable
@@ -681,7 +675,7 @@ private fun InsightsScreen(
     onOpenSafetyPlan: () -> Unit
 ) {
     var mode by rememberSaveable { mutableStateOf("График") }
-    var section by rememberSaveable { mutableStateOf("Обзор") }
+    var section by rememberSaveable { mutableStateOf("Графики") }
     var showMoodDialog by rememberSaveable { mutableStateOf(false) }
     var showSleepDialog by rememberSaveable { mutableStateOf(false) }
     var showImpulseDialog by rememberSaveable { mutableStateOf(false) }
@@ -694,9 +688,15 @@ private fun InsightsScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Header("Аналитика", "Графики, импульсы, сон и тренды")
+            Header("Обзор", "Графики, импульсы, сон и тренды")
+            MascotSceneBanner(
+                imageRes = R.drawable.mascot_owl_overview,
+                title = "Сова смотрит на картину",
+                subtitle = "Замечай паттерны — без давления и оценок",
+                accentColor = LavenderAccent
+            )
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Обзор", "Импульсы", "Сон").forEach { tab ->
+                listOf("Графики", "Импульсы", "Сон").forEach { tab ->
                     FilterChip(
                         selected = section == tab,
                         onClick = { section = tab },
@@ -706,7 +706,7 @@ private fun InsightsScreen(
             }
         }
 
-        if (section == "Обзор") {
+        if (section == "Графики") {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("График", "Теплокарта").forEach {
@@ -849,6 +849,13 @@ private fun MedicationsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
+            MascotSceneBanner(
+                imageRes = R.drawable.mascot_bear_meds,
+                title = "Медведь напоминает мягко",
+                subtitle = "Приём лекарств — маленький заботливый шаг",
+                accentColor = BearBrown
+            )
+            Spacer(Modifier.height(8.dp))
             Header("Лекарства", "Напоминания, календарь и пропуски")
             Button(onClick = { showDialog = true }) { Text("Добавить препарат") }
         }
@@ -940,23 +947,14 @@ private fun ProfileScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.mascot_barsik),
-                    contentDescription = "Барсик",
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape),
-                    contentScale = ContentScale.Crop
-                )
-                Column {
-                    Header("Профиль", "Настройки, близкие и экспорт")
-                }
-            }
+            MascotSceneBanner(
+                imageRes = R.drawable.mascot_team_profile,
+                title = "Мы на связи",
+                subtitle = "Барсик, сова и медведь — твоя команда поддержки",
+                accentColor = YellowAccent
+            )
+            Spacer(Modifier.height(8.dp))
+            Header("Профиль", "Настройки, близкие и экспорт")
         }
         item {
             SectionCard {
@@ -1360,10 +1358,10 @@ private fun MoodRow(entry: MoodEntryEntity) {
 @Composable
 private fun ProactiveHint(latestMood: Double, hasRecentSleepIssue: Boolean) {
     val hint = when {
-        latestMood >= 4.0 -> "Помни о последствиях импульсивных решений. Отложи крупные решения на 24 часа."
-        latestMood <= -4.0 -> "Ты не один. Обратись к близким или открой Safety Plan."
-        hasRecentSleepIssue -> "Нарушение сна - частый триггер. Постарайся отдохнуть."
-        else -> "Регулярные короткие записи помогают заметить тренды раньше."
+        latestMood >= 4.0 -> "Сейчас много энергии — можно отложить крупные решения и свериться с близкими."
+        latestMood <= -4.0 -> "Тяжёлый момент. Ты не один — рядом Safety Plan и люди, которым можно написать."
+        hasRecentSleepIssue -> "Сон мог сбиться — это часто бывает. Небольшой отдых уже может помочь."
+        else -> "Короткие записи помогают замечать тренды. Делай в своём темпе."
     }
     SectionCard(containerColor = TurquoiseAccent.copy(alpha = 0.14f)) {
         Text(hint)
@@ -1599,23 +1597,11 @@ private fun moodColor(mood: Double): Color {
 }
 
 private fun moodDescription(mood: Double): String = when {
-    mood <= -4 -> "Резкое снижение"
-    mood < -1 -> "Снижение"
-    mood >= 4 -> "Резкий подъем"
-    mood > 1 -> "Подъем"
-    else -> "Ровное состояние"
-}
-
-private fun mascotName(mood: Double): String = when {
-    mood <= -2.0 -> "Биполярный медведь"
-    mood >= 2.0 -> "Биполярная сова"
-    else -> "Барсик"
-}
-
-private fun mascotAccent(mood: Double): Color = when {
-    mood <= -2.0 -> BearBrown
-    mood >= 2.0 -> LavenderAccent
-    else -> TurquoiseAccent
+    mood <= -4 -> "Сейчас непросто — это заметно"
+    mood < -1 -> "Немного ниже обычного"
+    mood >= 4 -> "Много подъёма и энергии"
+    mood > 1 -> "Чуть выше обычного"
+    else -> "Ровное, спокойное состояние"
 }
 
 private fun averageMood(entries: List<MoodEntryEntity>): Double {

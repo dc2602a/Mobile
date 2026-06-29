@@ -37,6 +37,9 @@ interface AppDao {
     @Query("SELECT * FROM medications ORDER BY time ASC, name ASC")
     fun observeMedications(): Flow<List<MedicationEntity>>
 
+    @Query("SELECT * FROM medications ORDER BY time ASC, name ASC")
+    suspend fun getAllMedications(): List<MedicationEntity>
+
     @Insert
     suspend fun insertMedication(entry: MedicationEntity): Long
 

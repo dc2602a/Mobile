@@ -12,6 +12,8 @@ import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.bipolarmood.R
+import com.bipolarmood.data.AppDatabase
+import com.bipolarmood.data.MedicationEntity
 
 class MedicationReminderWorker(
     private val context: Context,
@@ -28,6 +30,7 @@ class MedicationReminderWorker(
             if (!granted) return Result.success()
         }
 
+        val medicationId = inputData.getLong(KEY_MEDICATION_ID, -1L)
         val medicationName = inputData.getString(KEY_MEDICATION_NAME).orEmpty().ifBlank { "препарат" }
         val dosage = inputData.getString(KEY_DOSAGE).orEmpty()
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
@@ -39,9 +42,24 @@ class MedicationReminderWorker(
             .build()
 
         NotificationManagerCompat.from(context).notify(
-            inputData.getLong(KEY_MEDICATION_ID, 1L).toInt(),
+            MedicationReminderScheduler.notificationId(medicationId),
             notification
         )
+
+        if (medicationId > 0) {
+            val dao = AppDatabase.get(context).dao()
+            val medication = dao.getAllMedications().firstOrNull { it.id == medicationId }
+                ?: MedicationEntity(
+                    id = medicationId,
+                    name = medicationName,
+                    dosage = dosage,
+                    time = inputData.getString(KEY_TIME).orEmpty().ifBlank { "09:00" },
+                    frequency = inputData.getString(KEY_FREQUENCY).orEmpty().ifBlank { "ежедневно" },
+                    timeZone = inputData.getString(KEY_TIMEZONE).orEmpty().ifBlank { java.util.TimeZone.getDefault().id }
+                )
+            val interval = inputData.getInt(KEY_INTERVAL_MINUTES, 30).coerceAtLeast(15)
+            MedicationReminderScheduler.schedule(context, medication, interval)
+        }
         return Result.success()
     }
 
@@ -53,7 +71,7 @@ class MedicationReminderWorker(
             "Напоминания о лекарствах",
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Повторные напоминания о приеме назначенных препаратов"
+            description = "Напоминания о приёме назначенных препаратов по расписанию"
         }
         manager.createNotificationChannel(channel)
     }
@@ -62,6 +80,10 @@ class MedicationReminderWorker(
         const val KEY_MEDICATION_ID = "medication_id"
         const val KEY_MEDICATION_NAME = "medication_name"
         const val KEY_DOSAGE = "dosage"
+        const val KEY_TIME = "medication_time"
+        const val KEY_TIMEZONE = "medication_timezone"
+        const val KEY_FREQUENCY = "medication_frequency"
+        const val KEY_INTERVAL_MINUTES = "interval_minutes"
         private const val CHANNEL_ID = "medication_reminders"
     }
 }

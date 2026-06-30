@@ -89,5 +89,6 @@ data class ProfileEntity(
     val reminderIntervalMinutes: Int,
     val doctorContact: String,
     val crisisNumbers: String,
-    val copingStrategies: String
+    val copingStrategies: String,
+    val customSymptoms: String = ""
 )

@@ -15,6 +15,16 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.outlined.EditNote
+import androidx.compose.material.icons.outlined.Mood
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -68,14 +78,14 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,10 +100,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,7 +120,6 @@ import com.bipolarmood.data.SleepEntryEntity
 import com.bipolarmood.data.TrustedPersonEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -235,6 +241,7 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                         onAddDiary = viewModel::addDiaryEntry,
                         onUpdateDiary = viewModel::updateDiaryEntry,
                         onDeleteDiary = viewModel::deleteDiaryEntry,
+                        onAddCustomSymptoms = viewModel::addCustomSymptoms,
                         onOpenSafetyPlan = { showSafetyPlan = true },
                         hasMissedMeds = hasMissedMeds
                     )
@@ -250,6 +257,7 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                     )
 
                     Screen.Insights -> InsightsScreen(
+                        profile = profile,
                         moods = moodEntries,
                         impulses = impulseEntries,
                         intakes = medicationIntakes,
@@ -260,6 +268,7 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                         onAddImpulse = viewModel::addImpulse,
                         onTrustedScore = viewModel::addTrustedImpulseScore,
                         onDeleteImpulse = viewModel::deleteImpulse,
+                        onAddCustomSymptoms = viewModel::addCustomSymptoms,
                         trustedPeople = trustedPeople,
                         onOpenSafetyPlan = { showSafetyPlan = true }
                     )
@@ -267,7 +276,13 @@ private fun BipolarMoodApp(viewModel: AppViewModel) {
                     Screen.Profile -> ProfileScreen(
                         profile = profile,
                         trustedPeople = trustedPeople,
+                        moods = moodEntries,
+                        impulses = impulseEntries,
+                        medications = medications,
+                        intakes = medicationIntakes,
                         exportCsv = viewModel::exportCsv,
+                        findTrustedByToken = viewModel::findTrustedByToken,
+                        trustedShareMessage = viewModel::trustedShareMessage,
                         onSaveProfile = viewModel::saveProfile,
                         onAddTrusted = viewModel::addTrustedPerson,
                         onRevokeTrusted = viewModel::revokeTrustedAccess,
@@ -296,6 +311,7 @@ private fun MainDiaryScreen(
     onAddDiary: (String, List<String>) -> Unit,
     onUpdateDiary: (DiaryEntryEntity, String, List<String>) -> Unit,
     onDeleteDiary: (DiaryEntryEntity) -> Unit,
+    onAddCustomSymptoms: (List<String>) -> Unit,
     onOpenSafetyPlan: () -> Unit,
     hasMissedMeds: Boolean
 ) {
@@ -311,9 +327,10 @@ private fun MainDiaryScreen(
     val latestMood = moods.firstOrNull()?.mood ?: 0.0
 
     Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 88.dp),
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 20.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
@@ -363,27 +380,6 @@ private fun MainDiaryScreen(
                     latestMood = latestMood,
                     hasRecentSleepIssue = moods.any { it.symptoms.contains("нарушение сна") }
                 )
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(containerColor = YellowAccent, contentColor = Color.Black),
-                        onClick = { showMoodDialog = true }
-                    ) {
-                        Text("Состояние", fontWeight = FontWeight.SemiBold)
-                    }
-                    OutlinedButton(
-                        modifier = Modifier.weight(1f),
-                        onClick = { showDiaryDialog = true }
-                    ) {
-                        Text("Заметка")
-                    }
-                }
             }
 
             item {
@@ -437,10 +433,51 @@ private fun MainDiaryScreen(
                 }
             }
         }
+        Surface(
+            tonalElevation = 6.dp,
+            shadowElevation = 10.dp,
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = { showMoodDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary
+                    )
+                ) {
+                    Icon(Icons.Outlined.Mood, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Состояние", fontWeight = FontWeight.SemiBold)
+                }
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = { showDiaryDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    Icon(Icons.Outlined.EditNote, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Заметка", fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        }
     }
 
     if (showMoodDialog) {
         MoodEntryDialog(
+            profile = profile,
+            onAddCustomSymptoms = onAddCustomSymptoms,
             onDismiss = { showMoodDialog = false },
             onSave = { mood, category, symptoms, note, timestamp ->
                 onAddMood(mood, category, symptoms, note, timestamp)
@@ -567,23 +604,32 @@ private fun DiaryFeedCard(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
-            AssistChip(
-                onClick = {},
-                label = { Text("Заметка") },
-                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
-                    containerColor = LavenderAccent.copy(alpha = 0.2f),
-                    labelColor = LavenderAccent
-                )
-            )
-            Text(
-                formatDateTime(entry.timestamp),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF5A5A5A)
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Заметка") },
+                        colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                            containerColor = AppTheme.SoftLilac.copy(alpha = 0.18f),
+                            labelColor = AppTheme.SoftLilac
+                        )
+                    )
+                    Text(
+                        formatDateTime(entry.timestamp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = AppTheme.InkMuted
+                    )
+                }
+                Text(entry.text, color = AppTheme.InkPrimary)
+            }
+            FeedActionIcons(onEdit = onEdit, onDelete = onDelete)
         }
-        Text(entry.text, color = Color(0xFF1F1F1F))
         val photos = splitPipe(entry.photoUris)
         if (photos.isNotEmpty()) {
             Row(
@@ -597,10 +643,6 @@ private fun DiaryFeedCard(
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(onClick = onEdit) { Text("Редактировать", color = Color(0xFF333333)) }
-            TextButton(onClick = onDelete) { Text("Удалить", color = RedAccent) }
-        }
     }
 }
 
@@ -610,42 +652,51 @@ private fun MoodFeedCard(
     onDelete: () -> Unit
 ) {
     SectionCard(
-        containerColor = moodColor(entry.mood).copy(alpha = 0.12f)
+        containerColor = moodColor(entry.mood).copy(alpha = 0.10f)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            AssistChip(
-                onClick = {},
-                label = { Text("Состояние") },
-                colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
-                    containerColor = moodColor(entry.mood).copy(alpha = 0.2f),
-                    labelColor = moodColor(entry.mood)
-                )
-            )
-            Text(
-                formatDateTime(entry.timestamp),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalAlignment = Alignment.Top
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(entry.category.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.Bold)
-                if (entry.note.isNotBlank()) Text(entry.note, modifier = Modifier.padding(top = 4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("Состояние") },
+                        colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(
+                            containerColor = moodColor(entry.mood).copy(alpha = 0.18f),
+                            labelColor = moodColor(entry.mood)
+                        )
+                    )
+                    Text(
+                        formatDateTime(entry.timestamp),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = AppTheme.InkMuted
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(entry.category.replaceFirstChar { it.uppercase() }, fontWeight = FontWeight.Bold)
+                        if (entry.note.isNotBlank()) Text(entry.note, modifier = Modifier.padding(top = 4.dp))
+                    }
+                    Text(
+                        entry.mood.prettyMood(),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = moodColor(entry.mood),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
-            Text(
-                entry.mood.prettyMood(),
-                style = MaterialTheme.typography.headlineMedium,
-                color = moodColor(entry.mood),
-                fontWeight = FontWeight.Bold
-            )
+            FeedActionIcons(onDelete = onDelete)
         }
         val symptoms = splitPipe(entry.symptoms)
         if (symptoms.isNotEmpty()) {
@@ -655,12 +706,12 @@ private fun MoodFeedCard(
                 }
             }
         }
-        TextButton(onClick = onDelete) { Text("Удалить", color = RedAccent) }
     }
 }
 
 @Composable
 private fun InsightsScreen(
+    profile: ProfileEntity,
     moods: List<MoodEntryEntity>,
     impulses: List<ImpulseEntryEntity>,
     intakes: List<MedicationIntakeEntity>,
@@ -671,6 +722,7 @@ private fun InsightsScreen(
     onAddImpulse: (String, Double?, String, Int, String) -> Unit,
     onTrustedScore: (ImpulseEntryEntity, Int, String) -> Unit,
     onDeleteImpulse: (ImpulseEntryEntity) -> Unit,
+    onAddCustomSymptoms: (List<String>) -> Unit,
     @Suppress("UNUSED_PARAMETER") trustedPeople: List<TrustedPersonEntity>,
     onOpenSafetyPlan: () -> Unit
 ) {
@@ -803,7 +855,11 @@ private fun InsightsScreen(
     }
 
     if (showMoodDialog) {
-        MoodEntryDialog(onDismiss = { showMoodDialog = false }, onSave = { mood, category, symptoms, note, timestamp ->
+        MoodEntryDialog(
+            profile = profile,
+            onAddCustomSymptoms = onAddCustomSymptoms,
+            onDismiss = { showMoodDialog = false },
+            onSave = { mood, category, symptoms, note, timestamp ->
             onAddMood(mood, category, symptoms, note, timestamp)
             showMoodDialog = false
         })
@@ -920,7 +976,13 @@ private fun MedicationsScreen(
 private fun ProfileScreen(
     profile: ProfileEntity,
     trustedPeople: List<TrustedPersonEntity>,
+    moods: List<MoodEntryEntity>,
+    impulses: List<ImpulseEntryEntity>,
+    medications: List<MedicationEntity>,
+    intakes: List<MedicationIntakeEntity>,
     exportCsv: () -> String,
+    findTrustedByToken: (String) -> TrustedPersonEntity?,
+    trustedShareMessage: (TrustedPersonEntity) -> String,
     onSaveProfile: (ProfileEntity) -> Unit,
     onAddTrusted: (String, String) -> Unit,
     onRevokeTrusted: (TrustedPersonEntity) -> Unit,
@@ -928,7 +990,9 @@ private fun ProfileScreen(
     onDeleteTrusted: (TrustedPersonEntity) -> Unit,
     onOpenSafetyPlan: () -> Unit
 ) {
-    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var showTrustedViewer by rememberSaveable { mutableStateOf(false) }
     var name by remember(profile) { mutableStateOf(profile.userName) }
     var birthday by remember(profile) { mutableStateOf(profile.birthday) }
     var dark by remember(profile) { mutableStateOf(profile.darkTheme) }
@@ -1002,6 +1066,10 @@ private fun ProfileScreen(
         item {
             SectionCard {
                 SectionTitle("Доступ близких")
+                Text(
+                    "Сгенерируй код и отправь его близкому. Он сможет открыть просмотр в этом же приложении.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(trustedName, { trustedName = it }, label = { Text("Имя близкого") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(trustedPhone, { trustedPhone = it }, label = { Text("Телефон") }, modifier = Modifier.fillMaxWidth())
                 Button(onClick = {
@@ -1010,17 +1078,25 @@ private fun ProfileScreen(
                         trustedName = ""
                         trustedPhone = ""
                     }
-                }) { Text("Сгенерировать доступ") }
+                }) { Text("Сгенерировать код") }
+                OutlinedButton(onClick = { showTrustedViewer = true }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Просмотр близкого (ввести код)")
+                }
                 Divider(Modifier.padding(vertical = 10.dp))
                 trustedPeople.forEach { person ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         Text("${person.name} ${if (person.revoked) "(отозван)" else ""}", fontWeight = FontWeight.Bold)
-                        Text("Токен: ${person.accessToken}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Код: ${person.accessToken}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            IconButton(onClick = {
+                                ExportHelper.copyToClipboard(context, trustedShareMessage(person))
+                            }) {
+                                Icon(Icons.Outlined.Share, contentDescription = "Отправить код", tint = AppTheme.SoftTeal)
+                            }
                             if (person.revoked) {
                                 TextButton(onClick = { onRestoreTrusted(person) }) { Text("Вернуть") }
                             } else {
-                                TextButton(onClick = { onRevokeTrusted(person) }) { Text("Отозвать", color = RedAccent) }
+                                TextButton(onClick = { onRevokeTrusted(person) }) { Text("Отозвать", color = AppTheme.SoftCoral) }
                             }
                             TextButton(onClick = { onDeleteTrusted(person) }) { Text("Удалить") }
                         }
@@ -1031,73 +1107,104 @@ private fun ProfileScreen(
         item {
             SectionCard {
                 SectionTitle("Экспорт / резервная копия")
-                Text("CSV формируется локально и может быть скопирован для врача или резервной копии.")
-                Button(onClick = { clipboard.setText(AnnotatedString(exportCsv())) }) { Text("Скопировать CSV") }
+                Text("CSV можно скопировать или отправить врачу, близкому или в файловое хранилище.")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val ok = ExportHelper.copyToClipboard(context, exportCsv())
+                        scope.launch {
+                            android.widget.Toast.makeText(
+                                context,
+                                if (ok) "CSV скопирован" else "Не удалось скопировать",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    }) { Text("Скопировать") }
+                    OutlinedButton(onClick = { ExportHelper.shareCsv(context, exportCsv()) }) {
+                        Icon(Icons.Outlined.Share, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Поделиться")
+                    }
+                }
             }
         }
+    }
+
+    if (showTrustedViewer) {
+        TrustedViewerDialog(
+            findTrustedByToken = findTrustedByToken,
+            moods = moods,
+            impulses = impulses,
+            medications = medications,
+            intakes = intakes,
+            onDismiss = { showTrustedViewer = false }
+        )
     }
 }
 
 @Composable
 private fun MoodEntryDialog(
+    profile: ProfileEntity,
+    onAddCustomSymptoms: (List<String>) -> Unit,
     onDismiss: () -> Unit,
     onSave: (Double, String, List<String>, String, Long) -> Unit
 ) {
     val categories = listOf("депрессия", "гипомания", "мания", "смешанное", "нейтральное")
-    val symptomOptions = listOf(
-        "нарушение сна",
-        "повышенная говорливость",
-        "раздражительность",
-        "чувство вины",
-        "дереализация/деперсонализация",
-        "ускорение мыслей",
-        "снижение потребности во сне"
-    )
+    val customSymptoms = splitPipe(profile.customSymptoms)
+    val symptomOptions = SymptomCatalog.allOptions(customSymptoms)
+    val pendingCustom = remember { mutableStateListOf<String>() }
     var mood by rememberSaveable { mutableStateOf(0f) }
     var category by rememberSaveable { mutableStateOf("нейтральное") }
     var note by rememberSaveable { mutableStateOf("") }
     var minutesAgo by rememberSaveable { mutableStateOf("0") }
-    val symptoms = remember { mutableStateListOf<String>() }
+    val symptoms = rememberSymptomSelection()
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Фиксация состояния") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.wrapContentHeight()) {
-                Text("Настроение: ${mood.toDouble().prettyMood()}")
-                Slider(value = mood, onValueChange = { mood = (it * 2).roundToInt() / 2f }, valueRange = -5f..5f, steps = 19)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    categories.forEach {
-                        FilterChip(selected = category == it, onClick = { category = it }, label = { Text(it) })
-                    }
-                }
-                OutlinedTextField(
-                    value = minutesAgo,
-                    onValueChange = { minutesAgo = it.filter(Char::isDigit) },
-                    label = { Text("Сколько минут назад") },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("Симптомы", fontWeight = FontWeight.Bold)
-                symptomOptions.forEach { symptom ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Checkbox(
-                            checked = symptoms.contains(symptom),
-                            onCheckedChange = { checked -> if (checked) symptoms.add(symptom) else symptoms.remove(symptom) }
-                        )
-                        Text(symptom)
-                    }
-                }
-                OutlinedTextField(note, { note = it }, label = { Text("Заметка") }, modifier = Modifier.fillMaxWidth())
+    FullScreenFormDialog(
+        title = "Фиксация состояния",
+        saveEnabled = true,
+        onDismiss = onDismiss,
+        onSave = {
+            if (pendingCustom.isNotEmpty()) onAddCustomSymptoms(pendingCustom.toList())
+            val timestamp = System.currentTimeMillis() - (minutesAgo.toLongOrNull() ?: 0L) * 60_000L
+            onSave(mood.toDouble(), category, symptoms.toList(), note, timestamp)
+        }
+    ) {
+        Text("Настроение: ${mood.toDouble().prettyMood()}", style = MaterialTheme.typography.titleMedium)
+        Slider(
+            value = mood,
+            onValueChange = { mood = (it * 2).roundToInt() / 2f },
+            valueRange = -5f..5f,
+            steps = 19
+        )
+        Text("Категория", fontWeight = FontWeight.Bold)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            categories.forEach {
+                FilterChip(selected = category == it, onClick = { category = it }, label = { Text(it) })
             }
-        },
-        confirmButton = {
-            Button(onClick = {
-                val timestamp = System.currentTimeMillis() - (minutesAgo.toLongOrNull() ?: 0L) * 60_000L
-                onSave(mood.toDouble(), category, symptoms.toList(), note, timestamp)
-            }) { Text("Сохранить") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+        }
+        OutlinedTextField(
+            value = minutesAgo,
+            onValueChange = { minutesAgo = it.filter(Char::isDigit) },
+            label = { Text("Сколько минут назад") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        SymptomMultiSelect(
+            options = symptomOptions + pendingCustom.filter { it !in symptomOptions },
+            selected = symptoms,
+            onToggle = { symptom ->
+                if (symptoms.contains(symptom)) symptoms.remove(symptom) else symptoms.add(symptom)
+            },
+            onAddCustom = { value ->
+                if (value !in symptoms) symptoms.add(value)
+                if (value !in pendingCustom) pendingCustom.add(value)
+            }
+        )
+        OutlinedTextField(
+            value = note,
+            onValueChange = { note = it },
+            label = { Text("Заметка") },
+            modifier = Modifier.fillMaxWidth().height(160.dp)
+        )
+    }
 }
 
 @Composable
@@ -1239,30 +1346,102 @@ private fun DiaryDialog(
     onDismiss: () -> Unit,
     onSave: (String, List<String>) -> Unit
 ) {
+    val context = LocalContext.current
     var text by rememberSaveable { mutableStateOf(initialText) }
     val photos = remember { mutableStateListOf<String>().apply { addAll(initialPhotos) } }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
+    var cameraUri by remember { mutableStateOf<Uri?>(null) }
+    val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
         photos.addAll(uris.map { it.toString() })
     }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Запись дневника") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(text, { text = it }, label = { Text("Текст") }, modifier = Modifier.fillMaxWidth().height(150.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { picker.launch("image/*") }) { Text("Фото из галереи") }
-                    OutlinedButton(onClick = { text += "\nФото с камеры: добавьте снимок через галерею после съемки." }) { Text("Камера") }
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) cameraUri?.let { photos.add(it.toString()) }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            val file = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            cameraUri = uri
+            cameraLauncher.launch(uri)
+        }
+    }
+
+    FullScreenFormDialog(
+        title = "Запись дневника",
+        saveEnabled = text.isNotBlank() || photos.isNotEmpty(),
+        onDismiss = onDismiss,
+        onSave = { onSave(text, photos.toList()) }
+    ) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text("Текст") },
+            modifier = Modifier.fillMaxWidth().height(260.dp)
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { galleryPicker.launch("image/*") }) { Text("Галерея") }
+            OutlinedButton(onClick = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                } else {
+                    val file = File(context.cacheDir, "camera_${System.currentTimeMillis()}.jpg")
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                    cameraUri = uri
+                    cameraLauncher.launch(uri)
                 }
-                Text("Фото: ${photos.size}")
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    photos.forEach { AssistChip(onClick = { photos.remove(it) }, label = { Text("Удалить фото") }) }
+            }) { Text("Камера") }
+        }
+        Text("Фото: ${photos.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            photos.forEach { uri ->
+                AssistChip(onClick = { photos.remove(uri) }, label = { Text("Удалить фото") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrustedViewerDialog(
+    findTrustedByToken: (String) -> TrustedPersonEntity?,
+    moods: List<MoodEntryEntity>,
+    impulses: List<ImpulseEntryEntity>,
+    medications: List<MedicationEntity>,
+    intakes: List<MedicationIntakeEntity>,
+    onDismiss: () -> Unit
+) {
+    var token by rememberSaveable { mutableStateOf("") }
+    var matched by remember { mutableStateOf<TrustedPersonEntity?>(null) }
+    FullScreenFormDialog(
+        title = "Просмотр близкого",
+        saveLabel = "Проверить",
+        saveEnabled = token.isNotBlank(),
+        onDismiss = onDismiss,
+        onSave = { matched = findTrustedByToken(token) }
+    ) {
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it },
+            label = { Text("Код доступа") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        matched?.let { person ->
+            Text("Здравствуй, ${person.name}!", fontWeight = FontWeight.Bold, color = AppTheme.SoftTeal)
+            SectionTitle("Состояния (последние 7)")
+            moods.take(10).forEach { MoodRow(it) }
+            SectionTitle("Импульсы")
+            if (impulses.isEmpty()) {
+                EmptyState("Импульсов пока нет")
+            } else {
+                impulses.take(5).forEach {
+                    Text("• ${it.description} (${formatDateTime(it.timestamp)})")
                 }
             }
-        },
-        confirmButton = { Button(enabled = text.isNotBlank() || photos.isNotEmpty(), onClick = { onSave(text, photos.toList()) }) { Text("Сохранить") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+            SectionTitle("Лекарства")
+            Text("Препаратов: ${medications.size}, принято: ${intakes.count { it.status == "taken" }}")
+        }
+        if (matched == null && token.isNotBlank()) {
+            Text("Код не найден или доступ отозван", color = AppTheme.SoftCoral)
+        }
+    }
 }
 
 @Composable
@@ -1559,30 +1738,8 @@ private fun UriImage(uri: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun BipolarMoodTheme(darkTheme: Boolean, content: @Composable () -> Unit) {
-    val darkScheme = darkColorScheme(
-        background = DeepBlack,
-        surface = SurfaceBlack,
-        surfaceVariant = Color(0xFF1E1E1E),
-        primary = YellowAccent,
-        secondary = TurquoiseAccent,
-        tertiary = LavenderAccent,
-        onBackground = Color.White,
-        onSurface = Color.White,
-        onSurfaceVariant = Color(0xFFB8B8B8)
-    )
-    val lightScheme = lightColorScheme(
-        background = Color(0xFFF5F3EF),
-        surface = Color.White,
-        surfaceVariant = Color(0xFFEDE8E0),
-        primary = Color(0xFF7A5C00),
-        secondary = Color(0xFF006874),
-        tertiary = Color(0xFF6B4C9A),
-        onBackground = Color(0xFF101010),
-        onSurface = Color(0xFF101010),
-        onSurfaceVariant = Color(0xFF555555)
-    )
     MaterialTheme(
-        colorScheme = if (darkTheme) darkScheme else lightScheme,
+        colorScheme = if (darkTheme) AppTheme.darkScheme() else AppTheme.lightScheme(),
         typography = Typography(),
         content = content
     )
@@ -1590,9 +1747,9 @@ private fun BipolarMoodTheme(darkTheme: Boolean, content: @Composable () -> Unit
 
 private fun moodColor(mood: Double): Color {
     return if (mood < 0) {
-        lerp(RedAccent, Color(0xFF777777), ((mood + 5.0) / 5.0).toFloat().coerceIn(0f, 1f))
+        lerp(AppTheme.SoftCoral, AppTheme.InkMuted, ((mood + 5.0) / 5.0).toFloat().coerceIn(0f, 1f))
     } else {
-        lerp(Color(0xFF777777), YellowAccent, (mood / 5.0).toFloat().coerceIn(0f, 1f))
+        lerp(AppTheme.InkMuted, AppTheme.WarmAmber, (mood / 5.0).toFloat().coerceIn(0f, 1f))
     }
 }
 
@@ -1612,11 +1769,9 @@ private fun splitPipe(value: String): List<String> {
     return value.split("|").map { it.trim() }.filter { it.isNotBlank() }
 }
 
-private val DeepBlack = Color(0xFF0B0B0B)
-private val SurfaceBlack = Color(0xFF121212)
-private val YellowAccent = Color(0xFFFFD700)
-private val RedAccent = Color(0xFFFF3B30)
-private val TurquoiseAccent = Color(0xFF4DD0E1)
-private val LavenderAccent = Color(0xFFB39DDB)
+private val YellowAccent = AppTheme.WarmAmber
+private val RedAccent = AppTheme.SoftCoral
+private val TurquoiseAccent = AppTheme.SoftTeal
+private val LavenderAccent = AppTheme.SoftLilac
 private val BearBrown = Color(0xFF8D6E63)
-private val PaperColor = Color(0xFFFFF8E7)
+private val PaperColor = AppTheme.PaperNote

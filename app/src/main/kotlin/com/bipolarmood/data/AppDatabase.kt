@@ -16,7 +16,7 @@ import androidx.room.RoomDatabase
         TrustedPersonEntity::class,
         ProfileEntity::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -28,11 +28,14 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase {
             return instance ?: synchronized(this) {
-                instance ?: Room.databaseBuilder(
+                instance ?:                 Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "bipolar_mood.db"
-                ).build().also { instance = it }
+                )
+                    .addMigrations(MIGRATION_1_2)
+                    .fallbackToDestructiveMigration()
+                    .build().also { instance = it }
             }
         }
     }

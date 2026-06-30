@@ -16,11 +16,13 @@ import com.bipolarmood.data.SleepEntryEntity
 import com.bipolarmood.data.TrustedPersonEntity
 import com.bipolarmood.notifications.MedicationReminderScheduler
 import com.bipolarmood.notifications.MedicationReminderWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -82,20 +84,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun addMoodEntry(mood: Double, category: String, symptoms: List<String>, note: String, timestamp: Long = now()) {
         viewModelScope.launch {
-            dao.insertMoodEntry(
-                MoodEntryEntity(
-                    timestamp = timestamp,
-                    mood = mood,
-                    category = category,
-                    symptoms = symptoms.joinToString("|"),
-                    note = note.trim()
+            withContext(Dispatchers.IO) {
+                dao.insertMoodEntry(
+                    MoodEntryEntity(
+                        timestamp = timestamp,
+                        mood = mood,
+                        category = category,
+                        symptoms = symptoms.joinToString("|"),
+                        note = note.trim()
+                    )
                 )
-            )
+            }
         }
     }
 
     fun deleteMoodEntry(entry: MoodEntryEntity) {
-        viewModelScope.launch { dao.deleteMoodEntry(entry) }
+        viewModelScope.launch { withContext(Dispatchers.IO) { dao.deleteMoodEntry(entry) } }
     }
 
     fun addImpulse(description: String, cost: Double?, category: String, authorScore: Int, comment: String) {
@@ -158,34 +162,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun markMedicationTaken(medication: MedicationEntity) {
         viewModelScope.launch {
-            val takenAt = now()
-            dao.updateMedication(medication.copy(missedReminders = 0, lastTakenAt = takenAt))
-            dao.insertMedicationIntake(
-                MedicationIntakeEntity(
-                    medicationId = medication.id,
-                    medicationName = medication.name,
-                    scheduledAt = takenAt,
-                    takenAt = takenAt,
-                    status = "taken"
+            withContext(Dispatchers.IO) {
+                val takenAt = now()
+                val updated = medication.copy(missedReminders = 0, lastTakenAt = takenAt)
+                dao.updateMedication(updated)
+                dao.insertMedicationIntake(
+                    MedicationIntakeEntity(
+                        medicationId = medication.id,
+                        medicationName = medication.name,
+                        scheduledAt = takenAt,
+                        takenAt = takenAt,
+                        status = "taken"
+                    )
                 )
-            )
-            scheduleMedicationReminder(medication.copy(missedReminders = 0, lastTakenAt = takenAt))
+                safeScheduleMedicationReminder(updated)
+            }
         }
     }
 
     fun registerMissedMedication(medication: MedicationEntity) {
         viewModelScope.launch {
-            val missed = medication.missedReminders + 1
-            dao.updateMedication(medication.copy(missedReminders = missed))
-            dao.insertMedicationIntake(
-                MedicationIntakeEntity(
-                    medicationId = medication.id,
-                    medicationName = medication.name,
-                    scheduledAt = now(),
-                    takenAt = null,
-                    status = if (missed >= 5) "escalated" else "missed"
+            withContext(Dispatchers.IO) {
+                val missed = medication.missedReminders + 1
+                val updated = medication.copy(missedReminders = missed)
+                dao.updateMedication(updated)
+                dao.insertMedicationIntake(
+                    MedicationIntakeEntity(
+                        medicationId = medication.id,
+                        medicationName = medication.name,
+                        scheduledAt = now(),
+                        takenAt = null,
+                        status = if (missed >= 5) "escalated" else "missed"
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -261,10 +271,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveProfile(profile: ProfileEntity) {
         viewModelScope.launch {
-            dao.upsertProfile(profile)
-            rescheduleAllMedicationReminders()
+            withContext(Dispatchers.IO) {
+                dao.upsertProfile(profile)
+                rescheduleAllMedicationReminders()
+            }
         }
     }
+
+    fun addCustomSymptoms(symptoms: List<String>) {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) {
+                val current = dao.getProfile() ?: defaultProfile()
+                val merged = (splitStored(current.customSymptoms) + symptoms)
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                dao.upsertProfile(current.copy(customSymptoms = merged.joinToString("|")))
+            }
+        }
+    }
+
+    fun findTrustedByToken(token: String): TrustedPersonEntity? =
+        trustedPeople.value.firstOrNull { it.accessToken.equals(token.trim(), ignoreCase = false) && !it.revoked }
+
+    fun trustedShareMessage(person: TrustedPersonEntity): String =
+        "Привет! Я делюсь доступом к моему дневнику БАРсик (только просмотр).\n" +
+            "1. Открой приложение БАРсик\n" +
+            "2. Профиль → Просмотр близкого\n" +
+            "3. Введи код: ${person.accessToken}"
 
     fun exportCsv(): String {
         val moods = moodEntries.value.joinToString("\n") {
@@ -315,12 +349,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun scheduleMedicationReminder(medication: MedicationEntity) {
-        MedicationReminderScheduler.schedule(
-            getApplication(),
-            medication,
-            profile.value.reminderIntervalMinutes
-        )
+        safeScheduleMedicationReminder(medication)
     }
+
+    private fun safeScheduleMedicationReminder(medication: MedicationEntity) {
+        if (medication.id <= 0L) return
+        runCatching {
+            MedicationReminderScheduler.schedule(
+                getApplication(),
+                medication,
+                profile.value.reminderIntervalMinutes
+            )
+        }
+    }
+
+    private fun splitStored(value: String): List<String> =
+        value.split("|").map { it.trim() }.filter { it.isNotBlank() }
 
     private suspend fun seedFirstRunData() {
         val base = now()
@@ -358,13 +402,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             userName = "Пользователь",
             avatarLabel = "Б",
             birthday = "",
-            darkTheme = true,
+            darkTheme = false,
             soundEnabled = true,
             timeZone = TimeZone.getDefault().id,
             reminderIntervalMinutes = 30,
             doctorContact = "Укажите контакт врача в настройках",
             crisisNumbers = "112",
-            copingStrategies = "Позвонить близкому|Выпить воды|Отложить важные решения на 24 часа|Перейти в тихое место"
+            copingStrategies = "Позвонить близкому|Выпить воды|Отложить важные решения на 24 часа|Перейти в тихое место",
+            customSymptoms = ""
         )
     }
 }
